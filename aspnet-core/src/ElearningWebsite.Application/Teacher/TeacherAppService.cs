@@ -19,11 +19,13 @@ namespace ElearningWebsite.Teacher
 {
     public class TeacherAppService:AppServiceBase
     {
-        public async Task<bool> CheckPerMissionCourse(long userId, long CourseId)
+        public  bool CheckPerMissionCourse(long userId, long CourseId)
         {
-            var a = WorkScope.GetRepo<UserRole>().GetAllIncluding(s => s.RoleId).Where(s => s.UserId == userId).Any(s => s.RoleId == 1);
+            
+            var admin = WorkScope.GetRepo<UserRole>().GetAllIncluding(s => s.RoleId).Where(s => s.UserId == userId).Any(s => s.RoleId == 1);
+            var teacher = WorkScope.GetRepo<UserRole>().GetAllIncluding(s => s.RoleId).Where(s => s.UserId == userId).Any(s => s.RoleId == 2);
             var b = WorkScope.GetAll<Course>().Where(s => s.CreatorUserId == userId).Any();
-            if (a == b == true)
+            if (admin==true ||(teacher == b == true))
             {
                 return true;
             }
@@ -33,12 +35,26 @@ namespace ElearningWebsite.Teacher
                 //return false;
             }
         }
+        public bool IsTeacher()
+        {
+            var a = AbpSession.UserId;
+            var teacher = WorkScope.GetRepo<UserRole>().GetAllIncluding(s => s.RoleId).Where(s => s.UserId == a).Any(s => s.RoleId == 2);
+            if (teacher == true)
+            {
+                return true;
+            }
+            else
+            {
+                throw new UserFriendlyException("Bạn không phải giáo viên, liên hệ admin để được hỗ trợ");
+            }
+        }
+        
 
         public async Task<PagedResultDto<GetAllCourseOutputDto>> GetAllCoursePaging(GetAllCourseInput input)
         {
             using (CurrentUnitOfWork.DisableFilter(AbpDataFilters.SoftDelete))
             {
-               
+                
              
                 var a = WorkScope.GetAll<Course>().WhereIf(!input.NameOfCourse.IsNullOrWhiteSpace(),s => s.Title.Contains(input.NameOfCourse))
                     .Where(s=>s.IsDeleted==false)
@@ -82,23 +98,27 @@ namespace ElearningWebsite.Teacher
         {
             using (CurrentUnitOfWork.DisableFilter(AbpDataFilters.SoftDelete))
             {
-                if(WorkScope.GetAll<Course>().Where(s=>s.IsDeleted==false && (s.Title==input.Title || s.Code == input.Code)).Any())
-                {
-                    throw new UserFriendlyException("Đã tồn tại tên hoặc code khóa học");
-                }
-                else
-                {
-                    var a = input.MapTo<Course>();
-                    a.UserId = AbpSession.UserId??0;
-                    var id =await  WorkScope.InsertAndGetIdAsync<Course>(a);
-                    return id;
-                }
+                if(IsTeacher() == true){
+                    if (WorkScope.GetAll<Course>().Where(s => s.IsDeleted == false && (s.Title == input.Title || s.Code == input.Code)).Any())
+                    {
+                        throw new UserFriendlyException("Đã tồn tại tên hoặc code khóa học");
+                    }
+                    else
+                    {
+                        var a = input.MapTo<Course>();
+                        a.UserId = AbpSession.UserId ?? 0;
+                        var id = await WorkScope.InsertAndGetIdAsync<Course>(a);
+                        return id;
+                    }
+                }else
+                { throw new UserFriendlyException("Bạn không phải giáo viên, liên hệ admin để được hỗ trợ"); }
             }
         }
         public async Task UpdateCourse(UpdateCoures input)
         {
             using (CurrentUnitOfWork.DisableFilter(AbpDataFilters.SoftDelete))
             {
+                CheckPerMissionCourse(AbpSession.UserId??0, input.Id);
                 if (WorkScope.GetAll<Course>().Where(s => s.IsDeleted == false && (s.Title == input.Title || s.Code == input.Code)).Any())
                 {
                     throw new UserFriendlyException("Đã tồn tại tên hoặc code khóa học");
@@ -116,12 +136,19 @@ namespace ElearningWebsite.Teacher
         } 
         public async Task DeleteCourse(long CourseId)
         {
-            var a = WorkScope.GetAll<Course>().Where(s => s.Id == CourseId).Select(s => s).FirstOrDefault();
-            var b = WorkScope.GetAll<Lesson>().Where(s => s.CourseId == CourseId).Select(s => s);
-            WorkScope.SoftDeleteAsync<Course>(a);
-            foreach(var i in b)
+            if (CheckPerMissionCourse(AbpSession.UserId ?? 0, CourseId))
             {
-                WorkScope.SoftDelete<Lesson>(i);
+                var a = WorkScope.GetAll<Course>().Where(s => s.Id == CourseId).Select(s => s).FirstOrDefault();
+                var b = WorkScope.GetAll<Lesson>().Where(s => s.CourseId == CourseId).Select(s => s);
+                WorkScope.SoftDeleteAsync<Course>(a);
+                foreach (var i in b)
+                {
+                    WorkScope.SoftDelete<Lesson>(i);
+                }
+            }
+            else
+            {
+                throw new UserFriendlyException("Bạn không có quyền thực hiện chức năng này");
             }
             
         }    
@@ -129,15 +156,21 @@ namespace ElearningWebsite.Teacher
         {
             using (CurrentUnitOfWork.DisableFilter(AbpDataFilters.SoftDelete))
             {
-                if (WorkScope.GetAll<Lesson>().Where(s=>s.IsDeleted==false).Any(s => Input.CourseId == s.CourseId && s.Tilte.Contains(Input.Tilte)))
+                if (CheckPerMissionCourse(AbpSession.UserId ?? 0, Input.Id))
                 {
-                    throw new UserFriendlyException("Khóa học đã tồn tại bài học này");
+                    if (WorkScope.GetAll<Lesson>().Where(s => s.IsDeleted == false).Any(s => Input.CourseId == s.CourseId && s.Tilte.Contains(Input.Tilte)))
+                    {
+                        throw new UserFriendlyException("Khóa học đã tồn tại bài học này");
+                    }
+                    else
+                    {
+                        var a = Input.MapTo<Lesson>();
+                        a.CreatorUserId = AbpSession.UserId ?? 0;
+                        var Id = await WorkScope.InsertAndGetIdAsync<Lesson>(a);
+                    }
                 }
-                else
-                {
-                    var a = Input.MapTo<Lesson>();
-                    a.CreatorUserId = AbpSession.UserId ?? 0;
-                    var Id = await WorkScope.InsertAndGetIdAsync<Lesson>(a);
+                else{
+                    throw new UserFriendlyException("Bạn không có quyền");
                 }
             }    
         }
@@ -145,16 +178,23 @@ namespace ElearningWebsite.Teacher
         {
             using (CurrentUnitOfWork.DisableFilter(AbpDataFilters.SoftDelete))
             {
-                if (WorkScope.GetAll<Lesson>().Where(s => s.IsDeleted == false).Any(s => Input.CourseId == s.CourseId && s.Tilte.Contains(Input.Tilte)))
+                if (CheckPerMissionCourse(AbpSession.UserId ?? 0, Input.Id))
                 {
-                    throw new UserFriendlyException("Khóa học đã tồn tại bài học này");
+                    if (WorkScope.GetAll<Lesson>().Where(s => s.IsDeleted == false).Any(s => Input.CourseId == s.CourseId && s.Tilte.Contains(Input.Tilte)))
+                    {
+                        throw new UserFriendlyException("Khóa học đã tồn tại bài học này");
+                    }
+                    else
+                    {
+                        var a = Input.MapTo<Lesson>();
+                        a.CreatorUserId = AbpSession.UserId ?? 0;
+                        await WorkScope.UpdateAsync<Lesson>(a);
+                        //throw new UserFriendlyException("Thành công");
+                    }
                 }
                 else
                 {
-                    var a = Input.MapTo<Lesson>();
-                    a.CreatorUserId = AbpSession.UserId ?? 0;
-                    await  WorkScope.UpdateAsync<Lesson>(a);
-                    //throw new UserFriendlyException("Thành công");
+                    throw new UserFriendlyException("Bạn không có quyền");
                 }
             }
         }
@@ -162,6 +202,7 @@ namespace ElearningWebsite.Teacher
         {
             using (CurrentUnitOfWork.DisableFilter(AbpDataFilters.SoftDelete))
             {
+
                 var a = WorkScope.GetAll<Lesson>().Where(s => s.Id == LessonId).Select(s => s).FirstOrDefault();
                 WorkScope.SoftDeleteAsync<Lesson>(a);
             }
